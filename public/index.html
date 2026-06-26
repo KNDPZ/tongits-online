@@ -1267,7 +1267,16 @@
   <div style="text-align:center;margin-top:10px">
     <a href="https://www.effectivecpmnetwork.com/gewsjdqwyu?key=200631fc30b6b7891078cb00f25613f1" target="_blank" rel="noopener nofollow sponsored" style="color:#9fc4ad;font-size:12px;text-decoration:none">♥ Enjoying the game? Support it</a>
   </div>
-  <div class="modal-actions"><button class="ghost" id="overClose">Close</button><button id="overNew" class="good" style="display:none">Deal next round</button></div>
+  <div class="modal-actions" id="overActions"></div>
+  <div id="overWaiting" class="hint" style="text-align:center;margin-top:6px"></div>
+  <div id="overLeftNotice" style="color:var(--danger);text-align:center;margin-top:8px;font-size:13px;font-weight:700;display:none"></div>
+</div></div>
+
+<!-- draw called: challenge / fold popup -->
+<div class="scrim" id="callScrim"><div class="modal">
+  <h2 id="callTitle">Draw called</h2>
+  <p id="callBody"></p>
+  <div class="modal-actions" id="callActions"></div>
 </div></div>
 
 <div class="toast" id="toast"></div>
@@ -1368,7 +1377,7 @@ document.querySelectorAll('input[name="amode"]').forEach(r=>r.onchange=()=>{$("r
 $("leaveLobby").onclick=leave;$("leaveBtn").onclick=leave;
 $("copyInvite").onclick=()=>{$("inviteLink").select();navigator.clipboard&&navigator.clipboard.writeText($("inviteLink").value);toast("Invite link copied");};
 function goHome(){try{if(ws){ws.onclose=null;ws.close();}}catch(e){}ws=null;clearTimeout(reconnectTimer);stopTimer();
-  view=null;groups=[];looseOrder=[];armedId=null;discardPick=null;prevHandIds=[];chatLines=[];chatUnread=0;chatOpen=false;updateChatFab();$("chatScrim").classList.remove("show");renderChat();room.id="";
+  view=null;groups=[];looseOrder=[];armedId=null;discardPick=null;prevHandIds=[];prevAnim=null;chatLines=[];chatUnread=0;chatOpen=false;updateChatFab();$("chatScrim").classList.remove("show");$("callScrim").classList.remove("show");$("overScrim").classList.remove("show");renderChat();room.id="";
   document.body.classList.remove("in-game");$("overScrim").classList.remove("show");
   ["hRoom","hPot","hMoney","leaveBtn"].forEach(id=>$(id).style.display="none");
   history.replaceState({},"",location.pathname);showPre("p-home");startRoomPoll();}
@@ -1452,6 +1461,42 @@ function doFly(fr,tr,opts){let clone;if(opts.faceDown){clone=document.createElem
   document.body.appendChild(clone);const fx=fr.left+fr.width/2,fy=fr.top+fr.height/2,tx=tr.left+tr.width/2,ty=tr.top+tr.height/2;
   clone.style.left=fx+"px";clone.style.top=fy+"px";void clone.offsetWidth;clone.classList.add("fly-go");clone.style.left=tx+"px";clone.style.top=ty+"px";clone.style.transform="translate(-50%,-50%) rotate(9deg)";
   setTimeout(()=>clone.remove(),470);}
+
+/* ---------- opponent / draw animations (diff between renders) ---------- */
+let prevAnim=null;
+function cardFromId(id){return {r:parseInt(id.slice(0,-1),10),s:id.slice(-1)};}
+function seatFromEl(i,youIdx){return i===youIdx?$("myHand"):$("seat-"+i);}
+function snapAnim(v){const r=v.round;return{
+  over:r.over,stock:r.stockCount,discardLen:r.discard.length,
+  hands:(r.handCounts||[]).slice(),
+  melds:(r.melds||[]).map(ms=>ms.map(m=>m.cards.map(cardId))),
+  lastMover:r.lastMover,youIdx:r.you?r.you.idx:-1};}
+function animateDiff(v){
+  const cur=snapAnim(v);const p=prevAnim;prevAnim=cur;
+  if(!p||cur.over||p.over)return;            // don't animate into/out of round-over
+  if(cur.stock>p.stock)return;               // stock went up = a fresh deal; skip
+  const youIdx=cur.youIdx;resetFly();
+  // draw from the pile
+  if(cur.stock===p.stock-1){
+    let drawer=-1;for(let i=0;i<cur.hands.length;i++){if(cur.hands[i]===(p.hands[i]||0)+1){drawer=i;break;}}
+    if(drawer<0)drawer=cur.lastMover;        // full opponent turn (drew + discarded)
+    if(drawer>=0&&drawer!==youIdx)flyBetween($("drawTarget"),seatFromEl(drawer,youIdx),{faceDown:true});
+  }
+  // discard (someone ended their turn)
+  if(cur.discardLen===p.discardLen+1){
+    const mover=cur.lastMover;
+    if(mover>=0&&mover!==youIdx){const c=v.round.discard[v.round.discard.length-1];flyBetween(seatFromEl(mover,youIdx),$("discardTarget"),{card:c});}
+  }
+  // melds laid / sapaw'd (opponents)
+  for(let i=0;i<cur.melds.length;i++){
+    if(i===youIdx)continue;
+    const pm=p.melds[i]||[],cm=cur.melds[i]||[];
+    for(let mi=0;mi<cm.length;mi++){
+      const before=new Set(pm[mi]||[]);const added=cm[mi].filter(id=>!before.has(id));
+      if(added.length){const target=meldElByIdx(i,mi);if(target)added.forEach(id=>flyBetween(seatFromEl(i,youIdx),target,{card:cardFromId(id)}));}
+    }
+  }
+}
 
 /* ---------- model reconcile ---------- */
 function myHandCards(){return (view&&view.round.you)?view.round.you.hand:[];}
@@ -1594,8 +1639,35 @@ function renderGame(v){
   const ng=document.createElement("div");ng.className="newgroup";ng.dataset.zone="newgroup";ng.textContent="drag here for a new group";tray.appendChild(ng);
 
   renderControls(v,myTurn);
+  animateDiff(v);
   setTimer(r.over?null:v.turn);
+  renderCallModal(v);
   renderOver(v);
+}
+function renderCallModal(v){
+  const r=v.round,c=r.call,scrim=$("callScrim");
+  if(!c||r.over){scrim.classList.remove("show");return;}
+  const youIdx=r.you?r.you.idx:-1;
+  const callerName=v.players[c.caller]?v.players[c.caller].name:"A player";
+  const acts=$("callActions");acts.innerHTML="";
+  const done=c.decided.length,total=done+c.pending.length;
+  if(c.youRespond){
+    $("callTitle").textContent="📣 A draw was called!";
+    $("callBody").innerHTML=`<b>${esc(callerName)}</b> called a draw. Your hand counts <b>${r.you?r.you.counted:0}</b>. <b>Challenge</b> if you can beat them, or <b>Fold</b> to bow out.`;
+    const ch=mkBtn("Challenge","good",()=>{ch.disabled=true;fo.disabled=true;respond("challenge");});
+    const fo=mkBtn("Fold","danger",()=>{ch.disabled=true;fo.disabled=true;respond("fold");});
+    acts.appendChild(ch);acts.appendChild(fo);
+  }else if(youIdx>=0&&(c.autoFold||[]).includes(youIdx)){
+    $("callTitle").textContent="You're burned";
+    $("callBody").innerHTML=`<b>${esc(callerName)}</b> called a draw, and you have no meld on the table — so you're <b style="color:var(--danger)">BURNED</b> and automatically out of this draw.`;
+  }else if(youIdx===c.caller){
+    $("callTitle").textContent="You called a draw";
+    $("callBody").innerHTML=`Waiting for opponents to challenge or fold… <b>(${done}/${total})</b>`;
+  }else{
+    $("callTitle").textContent="Draw called";
+    $("callBody").innerHTML=`<b>${esc(callerName)}</b> called a draw. Waiting for players with melds to decide… <b>(${done}/${total})</b>`;
+  }
+  scrim.classList.add("show");
 }
 function backEl2(){const el=document.createElement("div");el.className="cardback";return el;}
 
@@ -1605,23 +1677,11 @@ function armedCanJoin(meld){if(armedId==null)return false;const c=cardById(armed
 function setBanner(html){$("statusLine").innerHTML=html;}
 function renderControls(v,myTurn){
   const r=v.round;const c=$("controls");c.innerHTML="";
-  // a draw has been called — challenge / fold phase
+  // a draw has been called — the challenge/fold popup handles the choice
   if(r.call){
     const callerName=(v.players[r.call.caller]?v.players[r.call.caller].name:"A player");
-    if(r.call.youRespond){
-      const myPts=r.you?r.you.counted:0;
-      c.appendChild(mkBtn("Challenge","good",()=>respond("challenge")));
-      c.appendChild(mkBtn("Fold","danger",()=>respond("fold")));
-      const h=document.createElement("div");h.className="hint";
-      h.innerHTML=`<b>${esc(callerName)}</b> called a draw. Your hand counts <b>${myPts}</b>. <b>Challenge</b> if you can beat them, or <b>Fold</b> to bow out.`;c.appendChild(h);
-      setBanner(`<b>${esc(callerName)}</b> called a draw — challenge or fold.`);
-    }else{
-      const done=r.call.decided.length, total=done+r.call.pending.length;
-      const h=document.createElement("div");h.className="hint";
-      h.textContent=v.spectating?"A draw was called — watching the showdown.":(r.you&&r.you.idx===r.call.caller?"You called a draw. Waiting for opponents to challenge or fold…":"A draw was called. Waiting for opponents with melds to decide…");
-      c.appendChild(h);
-      setBanner(`Draw called by <b>${esc(callerName)}</b> — waiting on players (${done}/${total}).`);
-    }
+    const done=r.call.decided.length, total=done+r.call.pending.length;
+    setBanner(r.call.youRespond?`<b>${esc(callerName)}</b> called a draw — challenge or fold.`:`Draw called by <b>${esc(callerName)}</b> — waiting on players (${done}/${total}).`);
     return;
   }
   if(v.spectating){setBanner("Spectating — you'll be dealt in next round.");const h=document.createElement("div");h.className="hint";h.textContent="You can watch the table and chat while you wait.";c.appendChild(h);return;}
@@ -1711,7 +1771,7 @@ function renderOver(v){const r=v.round;if(!r.over){$("overScrim").classList.remo
   if(v.dud||(res&&res.dud)){
     $("overTitle").textContent="Round voided";
     $("overReason").textContent=v.dudReason||"A player left mid-game — this round doesn't count.";
-    $("overNew").style.display=v.youAreHost?"":"none";
+    renderOverActions(v);
     $("overScrim").classList.add("show");return;
   }
   const wn=res.winners.map(i=>v.players[i]?v.players[i].name:"?").join(" & ");
@@ -1755,11 +1815,25 @@ function renderOver(v){const r=v.round;if(!r.over){$("overScrim").classList.remo
     rev+=`<div class="reveal-row"><div class="reveal-name">${name}</div><div class="reveal-cards">${chips}</div><div class="reveal-pts">${pts}</div></div>`;});
   rev+=`<div class="reveal-legend" style="margin-top:8px;font-size:11px;color:#9fc4ad"><span class="rcard black">7♠</span> counts &middot; <span class="rcard meldc black">7♠</span> meld</div></div>`;
   $("overReveal").innerHTML=rev;
-  $("overNew").style.display=v.youAreHost?"":"none";
+  renderOverActions(v);
   $("overScrim").classList.add("show");
 }
-$("overNew").onclick=()=>{send({t:"next"});$("overScrim").classList.remove("show");};
-$("overClose").onclick=()=>$("overScrim").classList.remove("show");
+function renderOverActions(v){
+  const acts=$("overActions");acts.innerHTML="";
+  const wait=$("overWaiting"),notice=$("overLeftNotice");
+  if(v.lastLeft){notice.style.display="";notice.textContent=`${v.lastLeft} left the room.`;}
+  else{notice.style.display="none";notice.textContent="";}
+  if(v.youSeated){
+    if(v.youReadyNext){const b=mkBtn("Ready ✓","good",()=>{});b.disabled=true;acts.appendChild(b);}
+    else acts.appendChild(mkBtn("Ready","good",()=>send({t:"readyNext"})));
+    acts.appendChild(mkBtn("Leave table","danger",leave));
+    const waiting=(v.players||[]).filter(p=>p.seated&&!p.isAI&&!p.readyNext).map(p=>p.name);
+    wait.textContent=waiting.length?("Waiting on: "+waiting.join(", ")):"Everyone's ready — dealing the next round…";
+  }else{
+    acts.appendChild(mkBtn("Leave table","ghost",leave));
+    wait.textContent="The next round starts once seated players are ready.";
+  }
+}
 
 /* ---------- modals ---------- */
 $("rulesBtn").onclick=()=>$("rulesScrim").classList.add("show");
