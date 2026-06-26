@@ -299,6 +299,10 @@
     <p>Create your own table or join a friend's. <a href="#" id="changeName" style="color:var(--gold)">change name</a></p>
     <button class="good block" id="goCreate">Create a room</button>
     <button class="info block" id="goJoin">Join a room</button>
+    <div style="margin-top:18px">
+      <label style="display:flex;justify-content:space-between;align-items:center">Open tables <a href="#" id="refreshRooms" style="color:var(--gold);text-transform:none;letter-spacing:0">refresh</a></label>
+      <div class="seats" id="roomList"><div class="hint" style="padding:6px 0">Looking for open tables…</div></div>
+    </div>
   </div>
   <div id="p-create" style="display:none">
     <h2>Create a room</h2>
@@ -323,7 +327,18 @@
     <p>Room code: <b id="lobbyCode" style="font-size:18px;letter-spacing:2px;color:var(--gold)"></b></p>
     <div id="inviteWrap" class="invite" style="display:none"><input id="inviteLink" type="text" readonly /><button class="ghost" id="copyInvite">Copy</button></div>
     <div class="seats" id="lobbySeats"></div>
-    <div id="hostControls" style="display:none"><button class="good block" id="startGo">Fill empty seats with AI &amp; start</button></div>
+    <div id="hostControls" style="display:none">
+      <button class="good block" id="startGo">Fill empty seats with AI &amp; start</button>
+      <div id="readyWrap" style="margin-top:14px">
+        <div style="text-align:center;color:#9fc4ad;font-size:11px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px">— or wait for real players —</div>
+        <div id="modeToggles" style="display:none;margin-bottom:10px">
+          <label style="display:flex;align-items:center;gap:8px;margin:6px 0;cursor:pointer"><input type="radio" name="amode" value="openseat" style="width:auto">Auto-start with an open seat (start at 2, keep the 3rd seat open for anyone)</label>
+          <label style="display:flex;align-items:center;gap:8px;margin:6px 0;cursor:pointer"><input type="radio" name="amode" value="full" style="width:auto">Wait for seats to be full (start at 3 players)</label>
+        </div>
+        <button class="info block" id="readyGo" style="margin-top:0">READY — list this table &amp; wait for players</button>
+        <div id="readyHint" class="hint" style="margin-top:6px"></div>
+      </div>
+    </div>
     <div id="guestWait" class="hint" style="display:none">Waiting for the host to start…</div>
     <div class="modal-actions"><button class="ghost" id="leaveLobby">Leave</button></div>
   </div>
@@ -415,7 +430,7 @@ function esc(s){return String(s).replace(/[<>&]/g,c=>({"<":"&lt;",">":"&gt;","&"
 
 /* ---------- pre-game screens ---------- */
 const preSections=["p-name","p-home","p-create","p-join","p-lobby"];
-function showPre(id){$("preScrim").classList.add("show");preSections.forEach(s=>$(s).style.display=s===id?"":"none");}
+function showPre(id){$("preScrim").classList.add("show");preSections.forEach(s=>$(s).style.display=s===id?"":"none");if(id==="p-home")startRoomPoll();}
 function hidePre(){$("preScrim").classList.remove("show");}
 const params=new URLSearchParams(location.search);
 const urlRoom=(params.get("room")||"").toUpperCase().replace(/[^A-Z0-9]/g,"");
@@ -447,22 +462,49 @@ async function doJoin(code,password,invite){
     room={id:code,invite:"",capacity:r.capacity||3,isHost:false};connectWS();
   }catch(e){showPre("p-join");$("joinErr").textContent="Couldn't reach the server.";}}
 $("startGo").onclick=()=>send({t:"start"});
+$("readyGo").onclick=()=>{const chosen=document.querySelector('input[name="amode"]:checked');send({t:"ready",mode:chosen?chosen.value:undefined});};
+document.querySelectorAll('input[name="amode"]').forEach(r=>r.onchange=()=>{$("readyGo").disabled=false;$("readyHint").textContent="";});
 $("leaveLobby").onclick=leave;$("leaveBtn").onclick=leave;
 $("copyInvite").onclick=()=>{$("inviteLink").select();navigator.clipboard&&navigator.clipboard.writeText($("inviteLink").value);toast("Invite link copied");};
-function leave(){try{ws&&ws.close();}catch(e){}ws=null;clearTimeout(reconnectTimer);stopTimer();view=null;groups=[];looseOrder=[];armedId=null;discardPick=null;prevHandIds=[];chatLines=[];renderChat();
-  document.body.classList.remove("in-game");
-  ["hRoom","hPot","hMoney","leaveBtn"].forEach(id=>$(id).style.display="none");history.replaceState({},"",location.pathname);showPre("p-home");}
+function goHome(){try{if(ws){ws.onclose=null;ws.close();}}catch(e){}ws=null;clearTimeout(reconnectTimer);stopTimer();
+  view=null;groups=[];looseOrder=[];armedId=null;discardPick=null;prevHandIds=[];chatLines=[];renderChat();room.id="";
+  document.body.classList.remove("in-game");$("overScrim").classList.remove("show");
+  ["hRoom","hPot","hMoney","leaveBtn"].forEach(id=>$(id).style.display="none");
+  history.replaceState({},"",location.pathname);showPre("p-home");startRoomPoll();}
+function leave(){expectedClose=true;try{send({t:"leave"});}catch(e){}goHome();}
+
+/* ---------- public room list ---------- */
+let roomPollTimer=null;
+function startRoomPoll(){stopRoomPoll();fetchRooms();roomPollTimer=setInterval(fetchRooms,4000);}
+function stopRoomPoll(){if(roomPollTimer){clearInterval(roomPollTimer);roomPollTimer=null;}}
+async function fetchRooms(){
+  if(!$("p-home")||$("p-home").style.display==="none"){return;}
+  let rooms=[];try{const r=await fetch(apiBase+"/api/rooms");const d=await r.json();rooms=d.rooms||[];}catch(e){return;}
+  const el=$("roomList");if(!el)return;
+  if(!rooms.length){el.innerHTML='<div class="hint" style="padding:6px 0">No open tables right now. Create one and press READY!</div>';return;}
+  el.innerHTML="";
+  rooms.forEach(rm=>{const d=document.createElement("div");d.className="lseat";
+    d.innerHTML=`<div class="ava">${rm.type==="1v1"?"1·1":"1·2"}</div><div style="flex:1"><b>${rm.type}</b> table${rm.inProgress?' <span class="pill">in play</span>':''}<br><span style="font-size:12px;color:#9fc4ad">${rm.open} open seat${rm.open===1?"":"s"} · ${rm.players} seated</span></div>`;
+    const j=document.createElement("button");j.className="info small";j.textContent="Join";j.onclick=()=>doJoin(rm.roomId,"","");
+    d.appendChild(j);el.appendChild(d);});
+}
+$("refreshRooms").onclick=e=>{e.preventDefault();fetchRooms();};
 
 /* ---------- networking ---------- */
+let expectedClose=false;
 async function post(path,body){const res=await fetch(apiBase+path,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});return res.json();}
-function connectWS(){clearTimeout(reconnectTimer);try{ws&&ws.close();}catch(e){}
-  ws=new WebSocket(`${wsBase}/ws?room=${encodeURIComponent(room.id)}&token=${encodeURIComponent(me.token)}`);
-  ws.onopen=()=>send({t:"sync"});
-  ws.onmessage=ev=>{let m;try{m=JSON.parse(ev.data);}catch(e){return;}
+function connectWS(){stopRoomPoll();try{if(ws){ws.onclose=null;ws.close();}}catch(e){}
+  const sock=new WebSocket(`${wsBase}/ws?room=${encodeURIComponent(room.id)}&token=${encodeURIComponent(me.token)}`);
+  ws=sock;expectedClose=false;
+  sock.onopen=()=>send({t:"sync"});
+  sock.onmessage=ev=>{let m;try{m=JSON.parse(ev.data);}catch(e){return;}
     if(m.t==="state"){view=m.view;render();}
     else if(m.t==="error"){toast(m.error);send({t:"sync"});}
-    else if(m.t==="chat"){pushChat(m.line);}};
-  ws.onclose=()=>{if(room.id)reconnectTimer=setTimeout(connectWS,1500);};}
+    else if(m.t==="chat"){pushChat(m.line);}
+    else if(m.t==="kicked"){expectedClose=true;toast(m.reason||"Back to the lobby.");goHome();}
+    else if(m.t==="left"){expectedClose=true;}};
+  sock.onclose=()=>{if(ws!==sock)return;if(expectedClose){expectedClose=false;return;}
+    toast("Disconnected from the table.");goHome();};}
 function send(o){try{ws&&ws.readyState===1&&ws.send(JSON.stringify(o));}catch(e){}}
 function move(mv){send({t:"move",move:mv});armedId=null;discardPick=null;}
 
@@ -527,14 +569,30 @@ function renderLobby(v){
     seats.appendChild(d);});
   $("hostControls").style.display=v.youAreHost?"":"none";
   $("guestWait").style.display=v.youAreHost?"none":"";
+  // READY controls (host only)
+  if(v.youAreHost){
+    const is3=v.capacity===3;
+    $("modeToggles").style.display=is3?"":"none";
+    const chosen=document.querySelector('input[name="amode"]:checked');
+    if(v.ready){
+      $("readyGo").disabled=true;
+      $("readyGo").textContent="Listed — waiting for players…";
+      $("startGo").disabled=true;
+      $("readyHint").textContent=v.capacity===2?"Auto-starts when someone joins.":(v.mode==="openseat"?"Starts at 2 players; the 3rd seat stays open.":"Starts when all 3 seats are filled.");
+    }else{
+      $("readyGo").disabled=is3&&!chosen;
+      $("readyGo").textContent="READY — list this table & wait for players";
+      $("startGo").disabled=false;
+      $("readyHint").innerHTML=is3?(chosen?"":"Pick an auto-start option above to enable READY."):"This 1v1 table auto-starts when a second player joins.";
+    }
+  }
 }
 
 function badgesFor(v,i,isMe){
-  const r=v.round,p=v.players[i],s=v.seats[i];const out=[];
+  const r=v.round,p=v.players[i];const out=[];
   if(r.dealerIdx===i)out.push(`<span class="pill dealer">Dealer</span>`);
-  out.push(`<span class="pill money">🪙 $${p.money}</span>`);
   out.push(`<span class="pill rec">${p.rec.w}W&middot;${p.rec.l}L&middot;${p.rec.d}D</span>`);
-  out.push(`<span class="pill g">${s?s.games:0} G</span>`);
+  out.push(`<span class="pill g">${p.games||0} G</span>`);
   out.push(r.hasMelded[i]?`<span class="pill meld">Melded</span>`:`<span class="pill burn">Burned</span>`);
   out.push(`<span class="pill timer" data-seat="${i}"></span>`);
   return out.join("");
@@ -542,8 +600,9 @@ function badgesFor(v,i,isMe){
 
 function renderGame(v){
   const r=v.round;const youIdx=r.you?r.you.idx:-1;const myTurn=!r.over&&r.currentIdx===youIdx;
-  $("hRoom").style.display="";$("hPot").style.display="";$("hMoney").style.display="";$("leaveBtn").style.display="";
-  $("hRoom").textContent="Room "+v.roomId;$("hPot").textContent="Pot "+r.pot;$("hMoney").textContent="🪙 "+(v.players[youIdx]?v.players[youIdx].money:0);
+  $("hRoom").style.display="";$("leaveBtn").style.display="";$("hPot").style.display="none";$("hMoney").style.display="none";
+  $("hRoom").textContent="Room "+v.roomId+(v.roomType?" · "+v.roomType:"");
+  if(v.spectating)$("hRoom").textContent+=" · spectating";
   $("log").innerHTML=(v.log||[]).map(l=>`<div>${esc(l)}</div>`).join("");$("log").scrollTop=$("log").scrollHeight;
 
   // opponents
@@ -586,7 +645,7 @@ function renderGame(v){
   $("myName").textContent=(v.players[youIdx]?v.players[youIdx].name:"You");
   $("myBadges").innerHTML=youIdx>=0?badgesFor(v,youIdx,true):"";
   $("myPoints").textContent="Counts: "+(r.you?r.you.counted:0)+" pts";
-  $("potChip").textContent=r.pot>0?`🪙 Pot $${r.pot}`:"🪙 Pot —";
+  const pw=document.querySelector(".pot-wrap");if(pw)pw.style.display="none";
 
   const mm=$("myMelds");mm.innerHTML="";const addable=canArmAdd(v);
   (r.melds[youIdx]||[]).forEach((m,mi)=>mm.appendChild(meldEl(m,youIdx,mi,addable&&armedCanJoin(m))));
@@ -633,6 +692,7 @@ function armedCanJoin(meld){if(armedId==null)return false;const c=cardById(armed
 function setBanner(html){$("statusLine").innerHTML=html;}
 function renderControls(v,myTurn){
   const r=v.round;const c=$("controls");c.innerHTML="";
+  if(v.spectating){setBanner("Spectating — you'll be dealt in next round.");const h=document.createElement("div");h.className="hint";h.textContent="You can watch the table and chat while you wait.";c.appendChild(h);return;}
   if(discardPick){const top=r.discard[r.discard.length-1];
     const chosen=myHandCards().filter(x=>discardPick.chosen.has(cardId(x)));
     const meldCards=top?[top,...chosen]:chosen;const valid=meldCards.length>=3&&isValidMeld(meldCards);
@@ -714,19 +774,26 @@ function flagDrawn(id){justDrawn=id;if(justDrawnTimer)clearTimeout(justDrawnTime
 
 /* ---------- round over ---------- */
 function renderOver(v){const r=v.round;if(!r.over){$("overScrim").classList.remove("show");return;}const res=r.result;
-  $("overTitle").textContent=res.reason==="tongits"?(res.emptied?"Tongits!":"Out on melds!"):(res.draw?"Draw — pot split":"Round over");
-  const wn=res.winners.map(i=>v.players[i].name).join(" & ");
-  $("overReason").innerHTML=res.draw?`${esc(wn)} tie and split the pot. Next dealer is chosen among them.`:`${esc(wn)} wins this round.`;
-  let html="<tr><th>Player</th><th>Result</th><th>Pot</th><th>Money</th></tr>";
+  $("overTable").innerHTML="";$("overReveal").innerHTML="";
+  if(v.dud||(res&&res.dud)){
+    $("overTitle").textContent="Round voided";
+    $("overReason").textContent=v.dudReason||"A player left mid-game — this round doesn't count.";
+    $("overNew").style.display=v.youAreHost?"":"none";
+    $("overScrim").classList.add("show");return;
+  }
+  $("overTitle").textContent=res.reason==="tongits"?(res.emptied?"Tongits!":"Out on melds!"):(res.draw?"Draw":"Round over");
+  const wn=res.winners.map(i=>v.players[i]?v.players[i].name:"?").join(" & ");
+  $("overReason").innerHTML=res.draw?`${esc(wn)} tie. Next dealer is chosen among them.`:`${esc(wn)} wins this round.`;
+  let html="<tr><th>Player</th><th>Result</th></tr>";
   v.players.forEach((p,i)=>{const w=res.winners.includes(i);const burned=!r.hasMelded[i];const cls=w?"win":(burned?"burned":"");
-    html+=`<tr class="${cls}"><td>${esc(p.name)}${w?" 👑":""}${r.dealerIdx===i?" 🃏":""}</td><td>${w?(res.draw?"Draw":"Win"):(burned?"Burned":"Loss")}</td><td>${res.payouts[i]?"+$"+res.payouts[i]:"—"}</td><td>🪙 $${p.money}</td></tr>`;});
+    html+=`<tr class="${cls}"><td>${esc(p.name)}${w?" 👑":""}${r.dealerIdx===i?" 🃏":""}</td><td>${w?(res.draw?"Draw":"Win"):(burned?"Burned":"Loss")}</td></tr>`;});
   $("overTable").innerHTML=html;
   let rev=`<div class="reveal-wrap"><div class="reveal-title">Hands revealed</div>`;
   (r.reveal||[]).forEach(row=>{const mids=new Set(row.meldIds);
     let chips=row.cards.map(c=>`<span class="rcard ${mids.has(cardId(c))?'meldc':''} ${RED.has(c.s)?'red':'black'}">${rl(c.r)}${SUIT[c.s]}</span>`).join("");
     if(!row.cards.length)chips=`<span class="rempty">— empty —</span>`;
-    rev+=`<div class="reveal-row"><div class="reveal-name">${esc(v.players[row.idx].name)}</div><div class="reveal-cards">${chips}</div><div class="reveal-pts">${row.counted} pts</div></div>`;});
-  rev+=`<div class="reveal-legend" style="margin-top:8px;font-size:11px;color:#9fc4ad"><span class="rcard black">7♠</span> counts &middot; <span class="rcard meldc black">7♠</span> meld (not counted)</div></div>`;
+    rev+=`<div class="reveal-row"><div class="reveal-name">${esc(v.players[row.idx]?v.players[row.idx].name:"?")}</div><div class="reveal-cards">${chips}</div><div class="reveal-pts">${row.counted} pts</div></div>`;});
+  rev+=`<div class="reveal-legend" style="margin-top:8px;font-size:11px;color:#9fc4ad"><span class="rcard black">7♠</span> counts &middot; <span class="rcard meldc black">7♠</span> meld</div></div>`;
   $("overReveal").innerHTML=rev;
   $("overNew").style.display=v.youAreHost?"":"none";
   $("overScrim").classList.add("show");
