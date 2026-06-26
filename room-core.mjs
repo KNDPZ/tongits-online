@@ -39,6 +39,7 @@ export function createRoom(opts) {
     match: null, roundOrder: [], roundSeat: [],
     dealerSeat: 0, turnDeadline: null, round: 0,
     dud: false, dudReason: null,
+    readyNext: [], _lastLeftName: null,
     chat: [],
   };
   addPlayer(room, hostToken, hostName, false);
@@ -135,6 +136,7 @@ export function dealRound(room, dealerSeatHint, seed, rnd = Math.random) {
   E.startRound(room.match, dealerEng);
   room.status = "playing";
   room.dud = false; room.dudReason = null;
+  room.readyNext = []; room._lastLeftName = null;
   room.round++;
   return { ok: true };
 }
@@ -246,6 +248,7 @@ export function autoPlay(room) {
 function finishRound(room) {
   if (room.status === "over") return;
   room.status = "over";
+  room.readyNext = [];
   // sync cosmetic money + records back to the persistent roster (skip if dud)
   room.match.players.forEach((p, k) => {
     const sp = room.players[room.roundOrder[k]];
@@ -255,6 +258,19 @@ function finishRound(room) {
   });
   if (room.match.round.result && !room.dud)
     room._nextDealerToken = room.roundOrder[room.match.round.result.nextDealer];
+}
+
+// Between rounds: each human readies up; AI is always ready. When everyone's
+// ready, the caller should deal the next round.
+export function readyNextUp(room, token) {
+  if (room.status !== "over") return { ok: false, error: "round not over" };
+  const seat = seatIndexOf(room, token);
+  if (seat < 0) return { ok: false, error: "not seated" };
+  if (room.players[token] && room.players[token].isAI) return { ok: false, error: "AI auto-readies" };
+  if (!room.readyNext.includes(token)) room.readyNext.push(token);
+  const humans = humanTokens(room);
+  const allReady = humans.length > 0 && humans.every((t) => room.readyNext.includes(t));
+  return { ok: true, allReady };
 }
 
 // ---- leaving (the heart of the lifecycle) ----------------------------------
@@ -288,6 +304,8 @@ export function leaveRoom(room, token, { rnd = Math.random } = {}) {
   // human room (or lobby): vacate the seat
   room.seats[seat] = null;
   delete room.players[token];
+  room._lastLeftName = name;
+  room.readyNext = room.readyNext.filter((t) => room.seats.includes(t));
   if (token === room.hostToken) {
     const h = humanTokens(room)[0];
     if (h) room.hostToken = h;
@@ -309,9 +327,8 @@ export function leaveRoom(room, token, { rnd = Math.random } = {}) {
     room.status = "closed"; out.closed = true;
     return out;
   }
-  // >=2 humans remain: surface the dud, and let the room deal the next round
+  // >=2 humans remain: surface the dud; the remaining players ready up for the next round
   out.dud = room.dud; out.dudReason = room.dudReason;
-  if (room.status === "over" && humansLeft >= 2) out.dealNext = true;
   return out;
 }
 
@@ -346,11 +363,22 @@ export function viewForToken(room, token) {
   v.dud = room.dud; v.dudReason = room.dudReason;
   v.openSeats = room.seats.filter((t) => t === null).length;
   v.capacity = room.capacity;
-  // enrich each round participant with persistent G/rec; attach seat index
+  // enrich each round participant with persistent G/rec; attach seat index + ready state
   v.players = v.players.map((p, k) => {
-    const sp = room.players[room.roundOrder[k]] || {};
-    return { ...p, games: sp.games || 0, seat: room.roundSeat[k] };
+    const tk = room.roundOrder[k];
+    const sp = room.players[tk] || {};
+    const seated = room.seats.includes(tk);
+    return {
+      ...p, games: sp.games || 0, seat: room.roundSeat[k],
+      seated, isAI: sp.isAI || p.isAI,
+      readyNext: sp.isAI ? true : room.readyNext.includes(tk),
+    };
   });
+  if (room.status === "over") {
+    v.youReadyNext = room.readyNext.includes(token);
+    v.youSeated = room.seats.includes(token) && !(room.players[token] && room.players[token].isAI);
+    v.lastLeft = room._lastLeftName || null;
+  }
   v.log = room.match.log.slice(-40);
   if (room.status === "playing" && room.turnDeadline) {
     v.turn = { msLeft: Math.max(0, room.turnDeadline - Date.now()), totalMs: turnMsFor(room), idx: room.match.round.currentIdx };
@@ -361,7 +389,10 @@ export function viewForToken(room, token) {
 // What the Lobby Directory should advertise (null = don't list).
 export function lobbyMeta(room) {
   const open = room.seats.filter((t) => t === null).length;
-  const listed = room.ready && !room.isPrivate && room.status !== "closed" && open > 0;
+  // list: non-private, non-AI, not closed, has an open seat, and either a READY
+  // lobby room or a live human room (so a seat freed by a leaver gets re-listed)
+  const live = room.status === "playing" || room.status === "over";
+  const listed = !room.isPrivate && !room.aiRoom && room.status !== "closed" && open > 0 && (room.ready || live);
   if (!listed) return null;
   return {
     roomId: room.roomId,
@@ -369,7 +400,7 @@ export function lobbyMeta(room) {
     capacity: room.capacity,
     players: room.capacity - open,
     open,
-    inProgress: room.status === "playing" || room.status === "over",
+    inProgress: live,
   };
 }
 
