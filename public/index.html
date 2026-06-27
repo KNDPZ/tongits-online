@@ -1703,15 +1703,6 @@ function renderControls(v,myTurn){
   const disc=mkBtn("Discard armed","danger",()=>{if(armedId)doDiscard(armedId);});
   disc.disabled=!(playPhase&&armedId!=null);disc.title=armedId==null?"Tap a card to arm it first":"Discard the armed card";
   c.appendChild(disc);
-  const hint=document.createElement("div");hint.className="hint";
-  if(r.over)hint.textContent="Round over.";
-  else if(!myTurn)hint.textContent="You can rearrange and group your cards while you wait.";
-  else if(r.phase==="draw")hint.innerHTML="Draw a card — or <b>Call a draw</b> (before drawing) if you have a meld and a low hand.";
-  else hint.innerHTML="Drag to group; tap a card then a glowing meld to <b>sapaw</b>; drag a card onto the discard to end your turn.";
-  c.appendChild(hint);
-  const afk=document.createElement("div");afk.className="afk";
-  if(myTurn&&!r.over)afk.textContent="If your timer runs out, your lowest card is auto-discarded.";
-  c.appendChild(afk);
 }
 function respond(decision){send({t:"move",move:{type:"respond",decision}});}
 function mkBtn(label,cls,fn){const b=document.createElement("button");if(cls)b.className=cls;b.textContent=label;b.onclick=fn;return b;}
