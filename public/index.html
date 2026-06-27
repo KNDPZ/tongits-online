@@ -95,6 +95,7 @@
   .meld{display:flex;gap:2px;padding:4px;border-radius:9px;background:rgba(255,255,255,.05);box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.08);}
   .meld.addable{cursor:pointer;box-shadow:inset 0 0 0 2px var(--gold);}
   .meld.addable:hover{background:rgba(244,181,63,.14);}
+  .meld.dropzone{box-shadow:inset 0 0 0 2px var(--gold),0 0 14px rgba(244,181,63,.5);background:rgba(244,181,63,.16);}
   .center-piles{display:flex;align-items:flex-start;justify-content:center;gap:24px;margin:14px 0;flex-wrap:wrap;}
   .stack{display:flex;flex-direction:column;align-items:center;gap:6px;}
   .stack .label{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:#bfe0cd;}
@@ -128,6 +129,7 @@
   .hand.dropzone{box-shadow:inset 0 0 0 2px var(--gold);}
   .hand .card{cursor:grab;touch-action:none;transition:transform .08s, box-shadow .08s;}
   .hand .card.armed{transform:translateY(-11px);box-shadow:0 0 0 3px var(--gold),0 10px 16px rgba(0,0,0,.5);}
+  .group .cards .card.armed{box-shadow:0 0 0 3px var(--gold),0 8px 14px rgba(0,0,0,.5);transform:translateY(-6px);position:relative;z-index:5;}
   .hand .card.justdrawn{animation:newpulse 1s ease-in-out infinite;}
   @keyframes newpulse{0%,100%{box-shadow:0 0 0 3px var(--gold),0 0 14px rgba(244,181,63,.55);}50%{box-shadow:0 0 0 3px #fff0c0,0 0 24px rgba(244,181,63,.95);}}
   .card.candidate{animation:candglow 1.4s ease-in-out infinite;cursor:pointer;}
@@ -163,6 +165,8 @@
   .controls button{flex:1 1 auto;}
   .hint{color:#9fc4ad;font-size:11px;width:100%;text-align:center;margin-top:2px;line-height:1.45;}
   .afk{color:#e7c98a;font-size:11px;text-align:center;width:100%;margin-top:3px;}
+  .afkwarn{text-align:center;margin-top:8px;color:#ff6a5a;font-size:12.5px;font-weight:700;letter-spacing:.01em;animation:afkblink 1.05s ease-in-out infinite;}
+  @keyframes afkblink{0%,100%{opacity:1;}50%{opacity:.32;}}
 
   .scrim{position:fixed;inset:0;background:rgba(4,12,8,.74);backdrop-filter:blur(3px);display:none;align-items:center;justify-content:center;padding:18px;z-index:60;}
   .scrim.show{display:flex;}
@@ -236,7 +240,7 @@
   .chat-modal{display:flex;flex-direction:column;height:82vh;max-height:82vh;width:100%;}
   .chat-modal-head{display:flex;justify-content:space-between;align-items:center;font-family:var(--display);font-size:16px;color:var(--cream);margin-bottom:8px;}
   .chat-modal .chat-msgs{flex:1;background:rgba(0,0,0,.25);border-radius:10px;margin-bottom:8px;}
-  @media (prefers-reduced-motion: reduce){ *{transition:none !important;} .hand .card.justdrawn{animation:none;box-shadow:0 0 0 3px var(--gold);} .card.candidate{animation:none;box-shadow:0 0 0 2px rgba(244,181,63,.7);} .pill.timer.low{animation:none;} #mTimer.mine{animation:none;} }
+  @media (prefers-reduced-motion: reduce){ *{transition:none !important;} .hand .card.justdrawn{animation:none;box-shadow:0 0 0 3px var(--gold);} .card.candidate{animation:none;box-shadow:0 0 0 2px rgba(244,181,63,.7);} .pill.timer.low{animation:none;} #mTimer.mine{animation:none;} .afkwarn{animation:none;} }
 </style>
 </head>
 <body>
@@ -1089,6 +1093,7 @@
       <span class="hchip" id="hRoom" style="display:none">Room —</span>
       <span class="hchip pot" id="hPot" style="display:none">Pot 0</span>
       <span class="hchip" id="hMoney" style="display:none">🪙 0</span>
+      <button class="ghost" id="skinBtn" style="display:none">Card skin: off</button>
       <button class="ghost" id="rulesBtn">How to play</button>
       <button class="ghost" id="leaveBtn" style="display:none">Leave</button>
     </div>
@@ -1132,8 +1137,9 @@
         </div></div>
       </div>
       <div class="dock">
-        <div class="status" id="statusLine">Connecting…</div>
+        <div class="status" id="statusLine" style="display:none">Connecting…</div>
         <div class="controls" id="controls"></div>
+        <div class="afkwarn" id="afkWarn">⚠ If you go AFK and your turn timer runs out, your lowest card is auto-discarded.</div>
       </div>
     </section>
 
@@ -1320,6 +1326,7 @@ let ws=null,view=null,reconnectTimer=null;
 let groups=[];            // arrays of cardId strings (subset of my hand)
 let looseOrder=[];        // cardId order for ungrouped cards
 let armedId=null;
+let cardSkin=(()=>{try{return localStorage.getItem("tongits.skin")==="1";}catch(e){return false;}})();
 let discardPick=null;     // {chosen:Set}
 let justDrawn=null,justDrawnTimer=null,prevHandIds=[];
 let timer=null,timerInt=null;
@@ -1375,11 +1382,14 @@ $("startGo").onclick=()=>send({t:"start"});
 $("readyGo").onclick=()=>{const chosen=document.querySelector('input[name="amode"]:checked');send({t:"ready",mode:chosen?chosen.value:undefined});};
 document.querySelectorAll('input[name="amode"]').forEach(r=>r.onchange=()=>{$("readyGo").disabled=false;$("readyHint").textContent="";});
 $("leaveLobby").onclick=leave;$("leaveBtn").onclick=leave;
+function updateSkinBtn(){const b=$("skinBtn");if(b)b.textContent="Card skin: "+(cardSkin?"on":"off");}
+$("skinBtn").onclick=()=>{cardSkin=!cardSkin;try{localStorage.setItem("tongits.skin",cardSkin?"1":"0");}catch(e){}updateSkinBtn();if(view&&view.round)render();};
+updateSkinBtn();
 $("copyInvite").onclick=()=>{$("inviteLink").select();navigator.clipboard&&navigator.clipboard.writeText($("inviteLink").value);toast("Invite link copied");};
 function goHome(){try{if(ws){ws.onclose=null;ws.close();}}catch(e){}ws=null;clearTimeout(reconnectTimer);stopTimer();
   view=null;groups=[];looseOrder=[];armedId=null;discardPick=null;prevHandIds=[];prevAnim=null;chatLines=[];chatUnread=0;chatOpen=false;updateChatFab();$("chatScrim").classList.remove("show");$("callScrim").classList.remove("show");$("overScrim").classList.remove("show");renderChat();room.id="";
   document.body.classList.remove("in-game");$("overScrim").classList.remove("show");
-  ["hRoom","hPot","hMoney","leaveBtn"].forEach(id=>$(id).style.display="none");
+  ["hRoom","hPot","hMoney","leaveBtn","skinBtn"].forEach(id=>$(id).style.display="none");
   history.replaceState({},"",location.pathname);showPre("p-home");startRoomPoll();}
 function leave(){expectedClose=true;try{send({t:"leave"});}catch(e){}goHome();}
 
@@ -1444,10 +1454,14 @@ function paintTimers(){if(!timer)return;const left=Math.max(0,timer.deadline-Dat
     mt.classList.add("on");mt.classList.toggle("mine",mine);const tx=$("mTimerTxt");if(tx)tx.textContent=secs+"s";}}
 
 /* ---------- card + meld builders ---------- */
-function cardEl(c,small){const el=document.createElement("div");el.className="card svgcard "+(small?"sm ":"")+(RED.has(c.s)?"red":"black");
-  el.innerHTML=`<svg class="cf" viewBox="0 0 140 190" preserveAspectRatio="xMidYMid meet"><use href="#${faceId(c)}" xlink:href="#${faceId(c)}"/></svg>`;return el;}
+function cardEl(c,small){const el=document.createElement("div");
+  if(cardSkin){el.className="card svgcard "+(small?"sm ":"")+(RED.has(c.s)?"red":"black");
+    el.innerHTML=`<svg class="cf" viewBox="0 0 140 190" preserveAspectRatio="xMidYMid meet"><use href="#${faceId(c)}" xlink:href="#${faceId(c)}"/></svg>`;}
+  else{el.className="card "+(small?"sm ":"")+(RED.has(c.s)?"red":"black");
+    el.innerHTML=`<div class="corner">${rl(c.r)}<br>${SUIT[c.s]}</div><div class="pip">${SUIT[c.s]}</div><div class="corner br">${rl(c.r)}<br>${SUIT[c.s]}</div>`;}
+  return el;}
 function backEl(){const el=document.createElement("div");el.className="cardback";return el;}
-function meldEl(meld,owner,idx,addable){const w=document.createElement("div");w.className="meld"+(addable?" addable":"");w.dataset.owner=owner;w.dataset.meldidx=idx;
+function meldEl(meld,owner,idx,addable){const w=document.createElement("div");w.className="meld"+(addable?" addable":"");w.dataset.owner=owner;w.dataset.meldidx=idx;w.dataset.zone="meld";
   for(const c of meld.cards)w.appendChild(cardEl(c,true));
   if(addable){w.title="Add the armed card here";w.onclick=()=>sapaw(owner,idx,meld);}return w;}
 
@@ -1517,7 +1531,7 @@ function render(){
 }
 function renderLobby(v){
   showPre("p-lobby");stopTimer();
-  ["hRoom","hPot","hMoney","leaveBtn"].forEach(id=>$(id).style.display="none");
+  ["hRoom","hPot","hMoney","leaveBtn","skinBtn"].forEach(id=>$(id).style.display="none");
   $("lobbyCode").textContent=v.roomId;room.isHost=v.youAreHost;if(v.invite)room.invite=v.invite;
   if(room.isHost&&room.invite){$("inviteWrap").style.display="";$("inviteLink").value=`${location.origin}/?room=${v.roomId}&invite=${room.invite}`;}
   const seats=$("lobbySeats");seats.innerHTML="";
@@ -1558,7 +1572,7 @@ function badgesFor(v,i,isMe){
 
 function renderGame(v){
   const r=v.round;const youIdx=r.you?r.you.idx:-1;const myTurn=!r.over&&r.currentIdx===youIdx;
-  $("hRoom").style.display="";$("leaveBtn").style.display="";$("hPot").style.display="none";$("hMoney").style.display="none";
+  $("hRoom").style.display="";$("leaveBtn").style.display="";$("skinBtn").style.display="";$("hPot").style.display="none";$("hMoney").style.display="none";
   $("hRoom").textContent="Room "+v.roomId+(v.roomType?" · "+v.roomType:"");
   if(v.spectating)$("hRoom").textContent+=" · spectating";
   $("log").innerHTML=(v.log||[]).map(l=>`<div>${esc(l)}</div>`).join("");$("log").scrollTop=$("log").scrollHeight;
@@ -1628,7 +1642,7 @@ function renderGame(v){
     const cc=document.createElement("div");cc.className="cards";
     cards.forEach(c=>{const el=cardEl(c);el.dataset.cardid=cardId(c);
       if(discardPick){el.classList.add("candidate");if(discardPick.chosen.has(cardId(c)))el.classList.add("picksel");el.onclick=()=>togglePick(cardId(c));}
-      else attachPointer(el,cardId(c));cc.appendChild(el);});
+      else{if(armedId===cardId(c))el.classList.add("armed");attachPointer(el,cardId(c));}cc.appendChild(el);});
     gd.appendChild(cc);
     const meta=document.createElement("div");meta.className="gmeta";
     if(valid){const lay=document.createElement("button");lay.className="good small";lay.textContent="Lay on table";
@@ -1703,6 +1717,12 @@ function renderControls(v,myTurn){
   const disc=mkBtn("Discard armed","danger",()=>{if(armedId)doDiscard(armedId);});
   disc.disabled=!(playPhase&&armedId!=null);disc.title=armedId==null?"Tap a card to arm it first":"Discard the armed card";
   c.appendChild(disc);
+  const hint=document.createElement("div");hint.className="hint";
+  if(r.over)hint.textContent="Round over.";
+  else if(!myTurn)hint.textContent="You can rearrange and group your cards while you wait.";
+  else if(r.phase==="draw")hint.innerHTML="Draw a card — or <b>Call a draw</b> (before drawing) if you have a meld and a low hand.";
+  else hint.innerHTML="Tap a card then a glowing meld to <b>sapaw</b> — or drag a card onto a meld. Drag a card onto the discard to end your turn.";
+  c.appendChild(hint);
 }
 function respond(decision){send({t:"move",move:{type:"respond",decision}});}
 function mkBtn(label,cls,fn){const b=document.createElement("button");if(cls)b.className=cls;b.textContent=label;b.onclick=fn;return b;}
@@ -1720,13 +1740,20 @@ function onUp(e){window.removeEventListener("pointermove",onMove);if(!drag)retur
   if(drag.moved){clearZone();if(drag.clone)drag.clone.remove();if(drag.origin)drag.origin.style.visibility="";handleDrop(drag.id,e.clientX,e.clientY);}else tapCard(drag.id);
   drag=null;}
 function zoneUnder(x,y){const el=document.elementFromPoint(x,y);return el?el.closest("[data-zone]"):null;}
+function meldFromZone(z){const o=+z.dataset.owner,mi=+z.dataset.meldidx;const ms=view.round.melds[o];return ms&&ms[mi];}
 function highlightZone(x,y){clearZone();const z=zoneUnder(x,y);if(!z)return;const r=view.round;const myTurn=!r.over&&r.currentIdx===(r.you?r.you.idx:-1);
-  if(z.dataset.zone==="discard"){if(myTurn&&r.phase==="play")z.classList.add("dropzone");}else z.classList.add("dropzone");}
+  if(z.dataset.zone==="discard"){if(myTurn&&r.phase==="play")z.classList.add("dropzone");}
+  else if(z.dataset.zone==="meld"){const c=drag?cardById(drag.id):null;const meld=meldFromZone(z);if(myTurn&&r.phase==="play"&&c&&meld&&canAddToMeld(meld,c))z.classList.add("dropzone");}
+  else z.classList.add("dropzone");}
 function clearZone(){document.querySelectorAll(".dropzone").forEach(e=>e.classList.remove("dropzone"));}
 function insertIndexIn(container,x,skipId){const cards=[...container.querySelectorAll(".card")].filter(el=>el.dataset.cardid!==skipId);
   for(let i=0;i<cards.length;i++){const rc=cards[i].getBoundingClientRect();if(x<rc.left+rc.width/2)return i;}return cards.length;}
 function handleDrop(id,x,y){const z=zoneUnder(x,y);if(!z){render();return;}const t=z.dataset.zone;const r=view.round;const myTurn=!r.over&&r.currentIdx===(r.you?r.you.idx:-1);
   if(t==="discard"){if(myTurn&&r.phase==="play")doDiscard(id);else render();return;}
+  if(t==="meld"){const meld=meldFromZone(z);const c=cardById(id);
+    if(myTurn&&r.phase==="play"&&c&&meld&&canAddToMeld(meld,c))sapawCard(id,+z.dataset.owner,+z.dataset.meldidx,meld);
+    else render();
+    return;}
   removeFromModel(id);
   if(t==="hand"){const i=insertIndexIn($("myHand"),x,id);looseOrder.splice(i,0,id);}
   else if(t==="group"){const gi=+z.dataset.group;if(groups[gi]){const cc=z.querySelector(".cards");groups[gi].splice(insertIndexIn(cc,x,id),0,id);}else groups.push([id]);}
@@ -1739,8 +1766,9 @@ function tapCard(id){const r=view.round;const myTurn=!r.over&&r.currentIdx===(r.
 function doDraw(){resetFly();flyBetween($("drawTarget"),$("myHand"),{faceDown:true});move({type:"draw"});}
 function doDiscard(id){const c=cardById(id);resetFly();if(c)flyBetween($("myHand"),$("discardTarget"),{card:c});move({type:"discard",card:id});}
 function layGroup(gi){const g=groups[gi];if(!g)return;move({type:"meld",cards:g.slice()});groups.splice(gi,1);}
-function sapaw(owner,meldIdx,meld){if(!canArmAdd(view))return;const c=cardById(armedId);if(!c||!canAddToMeld(meld,c)){toast("That card doesn't fit there.");return;}
-  resetFly();flyBetween($("myHand"),meldElByIdx(owner,meldIdx),{card:c});move({type:"sapaw",card:armedId,owner,meldIdx});}
+function sapawCard(id,owner,meldIdx,meld){const c=cardById(id);if(!c||!canAddToMeld(meld,c)){toast("That card doesn't fit there.");return;}
+  resetFly();flyBetween($("myHand"),meldElByIdx(owner,meldIdx),{card:c});move({type:"sapaw",card:id,owner,meldIdx});}
+function sapaw(owner,meldIdx,meld){if(!canArmAdd(view))return;sapawCard(armedId,owner,meldIdx,meld);}
 function enterDiscardPick(){const r=view.round;const top=r.discard[r.discard.length-1];if(!top)return;
   if(!buildMeldWithCard(myHandCards(),top)){setBanner("No meld possible with that card — <b>draw from the draw pile</b> instead.");return;}
   discardPick={chosen:new Set()};armedId=null;render();}
