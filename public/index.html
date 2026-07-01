@@ -11,7 +11,7 @@
     --gold:#f4b53f; --gold-deep:#d8941b;
     --cream:#f3ead2; --cream-soft:#e9dcb9;
     --red:#c0392b; --ink:#23201a;
-    --danger:#d1495b; --info:#3aa9a0; --good:#46c08a;
+    --danger:#d1495b; --info:#3aa9a0; --good:#46c08a; --mint:#5fe3c8;
     --shadow: rgba(0,0,0,.35);
     --panel:rgba(0,0,0,.2);
     --display:'Fredoka', ui-rounded, 'Segoe UI', system-ui, sans-serif;
@@ -24,6 +24,7 @@
     -webkit-font-smoothing:antialiased;}
   .app{height:100dvh;display:flex;flex-direction:column;}
   header.top{flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:12px 16px 10px;}
+  body:not(.in-game) header.top{display:none;}
   .brand{display:flex;align-items:baseline;gap:10px;}
   .brand h1{font-family:var(--display);font-weight:700;font-size:30px;line-height:1;margin:0;letter-spacing:.5px;
     background:linear-gradient(180deg,#ffe7a3,var(--gold) 55%,var(--gold-deep));
@@ -168,7 +169,7 @@
   .afkwarn{text-align:center;margin-top:8px;color:#ff6a5a;font-size:12.5px;font-weight:700;letter-spacing:.01em;animation:afkblink 1.05s ease-in-out infinite;}
   @keyframes afkblink{0%,100%{opacity:1;}50%{opacity:.32;}}
 
-  .scrim{position:fixed;inset:0;background:rgba(4,12,8,.74);backdrop-filter:blur(3px);display:none;align-items:center;justify-content:center;padding:18px;z-index:60;}
+  .scrim{position:fixed;inset:0;background:rgba(4,12,8,.74);backdrop-filter:blur(3px);display:none;align-items:center;justify-content:center;padding:18px;z-index:100;}
   .scrim.show{display:flex;}
   .modal{background:linear-gradient(180deg,#13402e,#0c2c20);border-radius:20px;max-width:560px;width:100%;padding:24px;
     box-shadow:0 20px 60px rgba(0,0,0,.6), inset 0 0 0 1.5px rgba(244,181,63,.35);max-height:88vh;overflow:auto;}
@@ -244,7 +245,7 @@
 
   /* ---- full-page global lobby ---- */
   #lobby{position:fixed;inset:0;z-index:60;display:flex;flex-direction:column;padding:16px 18px 18px;gap:14px;overflow:hidden;
-    background:radial-gradient(120% 90% at 50% -10%, #123a2a 0%, var(--bg) 62%);}
+    background:radial-gradient(120% 90% at 50% -10%, #1b3a2c 0%, #0c1f17 60%, #08150f 100%);}
   .lb-top{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;}
   .lb-hi h2{margin:0;font-family:var(--display);color:var(--gold);font-size:26px;display:flex;align-items:center;gap:10px;}
   .lb-hi p{margin:5px 0 0;color:#cdbfe0;font-size:14px;}
@@ -270,7 +271,7 @@
   .lb-player .dot.lobby{background:var(--good);box-shadow:0 0 6px var(--good);}
   .lb-player .dot.playing{background:var(--gold);box-shadow:0 0 6px var(--gold);}
   .lb-player .nm{flex:1;color:var(--cream);font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-  .lb-player .st{font-family:var(--mono);font-size:9px;letter-spacing:.1em;padding:2px 7px;border-radius:999px;text-transform:uppercase;flex:0 0 auto;}
+  .lb-player .st{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:9px;letter-spacing:.1em;padding:2px 7px;border-radius:999px;text-transform:uppercase;flex:0 0 auto;}
   .lb-player .st.lobby{color:#0a3d27;background:var(--good);}
   .lb-player .st.playing{color:#1a1206;background:var(--gold);}
   .lb-player.me{cursor:default;} .lb-player.me .nm{color:var(--gold);font-weight:600;}
