@@ -1544,13 +1544,18 @@ function renderPlayers(){
     if(!isMe)d.onclick=()=>insertMention(u.name);
     el.appendChild(d);});
 }
+const WC_TTL_MS=15*60*1000; // messages vanish 15 min after they're sent
+function wcVisible(){const cutoff=Date.now()-WC_TTL_MS;return wcLines.filter(l=>!l.at||l.at>cutoff);}
 function fmtChat(text){return esc(text).replace(/@([A-Za-z0-9]+(?:\s[A-Za-z0-9]+)?)/g,'<span class="mention">@$1</span>');}
 function renderWorldChat(scroll){
   const el=$("lbChat");if(!el)return;
-  el.innerHTML=wcLines.map(l=>{const mine=l.name!==me.name&&textMentions(l.text,me.name);
+  const prevTop=el.scrollTop;
+  el.innerHTML=wcVisible().map(l=>{const mine=l.name!==me.name&&textMentions(l.text,me.name);
     return `<div class="wc-line${mine?" me-mention":""}"><span class="who">${esc(l.name)}:</span> ${fmtChat(l.text)}</div>`;}).join("");
-  if(scroll!==false)el.scrollTop=el.scrollHeight;
+  if(scroll!==false)el.scrollTop=el.scrollHeight;else el.scrollTop=prevTop;
 }
+setInterval(()=>{const cutoff=Date.now()-WC_TTL_MS;const before=wcLines.length;wcLines=wcLines.filter(l=>!l.at||l.at>cutoff);
+  if(wcLines.length!==before&&$("lobby")&&$("lobby").style.display!=="none")renderWorldChat(false);},20000);
 function insertMention(name){const inp=$("lbChatInput");if(!inp)return;const cur=inp.value.replace(/\s*$/,"");inp.value=(cur?cur+" ":"")+"@"+name+" ";inp.focus();}
 function sendWorld(){const inp=$("lbChatInput");if(!inp)return;const t=inp.value.trim();if(!t)return;hubSend({t:"chat",text:t});inp.value="";}
 $("lbChatSend").onclick=sendWorld;
